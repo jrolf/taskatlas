@@ -8,4 +8,4 @@ from taskatlas._link import Link
 from taskatlas._task import Task
 
 __all__ = ["Atlas", "Goal", "Task", "Link", "Event"]
-__version__ = "0.0.1"
+__version__ = "0.0.2"

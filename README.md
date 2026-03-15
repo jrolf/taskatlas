@@ -1,5 +1,10 @@
 # taskatlas
 
+[![PyPI version](https://img.shields.io/pypi/v/taskatlas.svg)](https://pypi.org/project/taskatlas/)
+[![Python versions](https://img.shields.io/pypi/pyversions/taskatlas.svg)](https://pypi.org/project/taskatlas/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/jrolf/taskatlas/actions/workflows/ci.yml/badge.svg)](https://github.com/jrolf/taskatlas/actions/workflows/ci.yml)
+
 A lean Python library for representing goals, tasks, relationships, priority, evolution, and history.
 
 ---
@@ -280,6 +285,12 @@ The test suite contains 213 tests covering all modules, relationships, history, 
 - **Retrieval returns context, not rows.** The library should feel like asking a colleague, not querying a database.
 - **The board is a view, not the ontology.** Tasks may move through stages, but the underlying reality is richer than columns on a board.
 - **Stay lean.** Zero dependencies. Small API surface. No enterprise ceremony.
+
+---
+
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for the branch model, how to run tests, and PR guidelines.
 
 ---
 

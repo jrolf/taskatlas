@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taskatlas"
-version = "0.0.1"
+version = "0.0.2"
 description = "A lean Python library for representing goals, tasks, relationships, priority, evolution, and history."
 readme = "README.md"
 license = "MIT"
@@ -32,12 +32,20 @@ classifiers = [
 Homepage = "https://github.com/jrolf/taskatlas"
 Repository = "https://github.com/jrolf/taskatlas"
 Issues = "https://github.com/jrolf/taskatlas/issues"
+Changelog = "https://github.com/jrolf/taskatlas/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "ruff>=0.4"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
 
 [tool.setuptools.packages.find]
 include = ["taskatlas*"]

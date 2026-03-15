@@ -89,3 +89,7 @@ cython_debug/
 .claude/
 **/.claude/
 claude.json
+
+# Internal working documents (kept locally, not for distribution)
+CONCEPT.md
+CRITICAL_REVIEW.md

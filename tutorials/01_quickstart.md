@@ -7,7 +7,7 @@ This tutorial walks through the fundamental operations of `taskatlas` — creati
 ## Install
 
 ```bash
-pip install -e .
+pip install taskatlas
 ```
 
 ## Import
