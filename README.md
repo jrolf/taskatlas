@@ -23,12 +23,14 @@ The library has **zero external dependencies**. It runs on Python 3.10+ using on
 ## Install
 
 ```bash
-pip install -e .
+pip install taskatlas
 ```
 
 For development (includes pytest):
 
 ```bash
+git clone https://github.com/jrolf/taskatlas.git
+cd taskatlas
 pip install -e ".[dev]"
 ```
 
