@@ -91,5 +91,6 @@ cython_debug/
 claude.json
 
 # Internal working documents (kept locally, not for distribution)
+.PLANS/
 CONCEPT.md
 CRITICAL_REVIEW.md
