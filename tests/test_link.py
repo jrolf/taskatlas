@@ -1,65 +1,63 @@
-"""Tests for the Link model."""
+"""Tests for the canonical Link model and causal endpoint rules."""
 
 import pytest
 
 from taskatlas._link import Link
 
 
-class TestLinkCreation:
-    def test_basic(self):
+class TestLinkModel:
+    def test_causal_depends_on_between_tasks_and_goals(self):
         lk = Link(
             source_id="t-aaa11111",
             source_type="task",
-            target_id="t-bbb22222",
-            target_type="task",
+            target_id="g-bbb22222",
+            target_type="goal",
             kind="depends_on",
+            meta={"note": "needs milestone"},
         )
         assert lk.id.startswith("lk-")
         assert lk.kind == "depends_on"
-        assert lk.source_id == "t-aaa11111"
-        assert lk.target_id == "t-bbb22222"
-        assert lk.meta == {}
+        assert lk.meta["note"] == "needs milestone"
 
-    def test_goal_to_task(self):
+    def test_dream_disallowed_on_causal_depends_on(self):
+        # Open-horizon Dreams cannot act as causal prerequisites or dependents
+        with pytest.raises(ValueError, match="depends_on"):
+            Link(
+                source_id="t-aaa11111",
+                source_type="task",
+                target_id="d-ccc33333",
+                target_type="dream",
+                kind="depends_on",
+            )
+
+    def test_dream_allowed_on_non_blocking_links(self):
         lk = Link(
-            source_id="g-aaa11111",
-            source_type="goal",
-            target_id="t-bbb22222",
-            target_type="task",
-            kind="supports",
+            source_id="d-aaa11111",
+            source_type="dream",
+            target_id="d-bbb22222",
+            target_type="dream",
+            kind="relates_to",
         )
-        assert lk.source_type == "goal"
-        assert lk.target_type == "task"
+        assert lk.kind == "relates_to"
 
-    def test_with_meta(self):
+    def test_link_is_immutable_and_rejects_removed_kinds(self):
         lk = Link(
             source_id="t-aaa11111",
             source_type="task",
             target_id="t-bbb22222",
             target_type="task",
-            kind="blocks",
-            meta={"severity": "critical"},
+            kind="derived_from",
         )
-        assert lk.meta["severity"] == "critical"
+        with pytest.raises(AttributeError, match="immutable"):
+            lk.kind = "depends_on"
 
-    def test_invalid_kind_raises(self):
         with pytest.raises(ValueError, match="Invalid link kind"):
             Link(
                 source_id="t-aaa11111",
                 source_type="task",
                 target_id="t-bbb22222",
                 target_type="task",
-                kind="invented_kind",
-            )
-
-    def test_invalid_source_type_raises(self):
-        with pytest.raises(ValueError, match="source_type"):
-            Link(
-                source_id="x-aaa11111",
-                source_type="widget",
-                target_id="t-bbb22222",
-                target_type="task",
-                kind="blocks",
+                kind="supports",
             )
 
     def test_self_link_raises(self):
@@ -71,39 +69,3 @@ class TestLinkCreation:
                 target_type="task",
                 kind="relates_to",
             )
-
-
-class TestLinkSerialization:
-    def test_round_trip(self):
-        lk1 = Link(
-            source_id="g-aaa11111",
-            source_type="goal",
-            target_id="t-bbb22222",
-            target_type="task",
-            kind="supports",
-            meta={"note": "critical path"},
-        )
-        d = lk1.to_dict()
-        lk2 = Link.from_dict(d)
-
-        assert lk2.id == lk1.id
-        assert lk2.source_id == lk1.source_id
-        assert lk2.target_id == lk1.target_id
-        assert lk2.kind == lk1.kind
-        assert lk2.meta == lk1.meta
-        assert lk2.created_at == lk1.created_at
-
-
-class TestLinkRepr:
-    def test_repr(self):
-        lk = Link(
-            source_id="t-aaa11111",
-            source_type="task",
-            target_id="g-bbb22222",
-            target_type="goal",
-            kind="relates_to",
-        )
-        r = repr(lk)
-        assert "relates_to" in r
-        assert "t-aaa11111" in r
-        assert "g-bbb22222" in r

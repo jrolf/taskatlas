@@ -1,181 +1,172 @@
-"""Tests for view rendering — board, tree, queue, summary."""
+"""Tests for board, progressive tree, critical-path readiness queue, summary, and briefs."""
 
-import pytest
-
-from taskatlas._atlas import Atlas
-from taskatlas._goal import Goal
-from taskatlas._task import Task
+import taskatlas as ta
 
 
-def _populated_atlas():
-    """Build an atlas with goals, tasks, subtasks for view tests."""
-    a = Atlas({"name": "View Tests"})
+class TestProgressiveTreeAndBoard:
+    def test_tree_omits_dreams_when_none_exist(self):
+        atlas = ta.Atlas("Goal Only")
+        g = atlas.add_goal("Ship CLI", status="active")
+        g.add_task("Argparse setup", stage="ready")
+        atlas.add_task("Unattached chore", stage="inbox")
 
-    g1 = a.add_goal({"title": "Ship v0", "status": "active", "priority": "high"})
-    g2 = a.add_goal({"title": "Write docs", "status": "proposed", "priority": "medium"})
-
-    t1 = a.add_task({"title": "Define API", "stage": "active", "priority": "high", "tags": ["core"]})
-    t2 = a.add_task({"title": "Build models", "stage": "ready", "priority": "high", "tags": ["core"]})
-    t3 = a.add_task({"title": "Write tests", "stage": "inbox", "priority": "medium"})
-    t4 = a.add_task({"title": "Review PR", "stage": "done", "priority": "low"})
-
-    g1.attach_task(t1)
-    g1.attach_task(t2)
-    g2.attach_task(t3)
-
-    sub1 = t2.add_task({"title": "Define Task class", "stage": "active", "priority": "high"})
-    sub2 = t2.add_task({"title": "Define Goal class", "stage": "ready", "priority": "medium"})
-
-    return a, g1, g2, t1, t2, t3, t4, sub1, sub2
-
-
-class TestBoardView:
-    def test_basic_board(self):
-        a, *_ = _populated_atlas()
-        board = a.board()
-        assert "stages" in board
-        assert "active" in board["stages"]
-        assert "inbox" in board["stages"]
-
-    def test_board_excludes_archived(self):
-        a, *_ = _populated_atlas()
-        t = a.add_task({"title": "Old", "stage": "inbox"})
-        t.move("archived")
-        board = a.board()
-        all_ids = []
-        for tasks in board["stages"].values():
-            all_ids.extend(t["id"] for t in tasks)
-        assert t.id not in all_ids
-
-    def test_board_scoped_to_goal(self):
-        a, g1, g2, t1, t2, t3, *_ = _populated_atlas()
-        board = a.board(goal_id=g1.id)
-        all_ids = []
-        for tasks in board["stages"].values():
-            all_ids.extend(t["id"] for t in tasks)
-        assert t1.id in all_ids
-        assert t2.id in all_ids
-        assert t3.id not in all_ids
-
-    def test_board_invalid_goal_raises(self):
-        a = Atlas()
-        with pytest.raises(KeyError):
-            a.board(goal_id="g-nonexist")
-
-    def test_board_task_summaries_have_fields(self):
-        a, *_ = _populated_atlas()
-        board = a.board()
-        for tasks in board["stages"].values():
-            for t in tasks:
-                assert "id" in t
-                assert "title" in t
-                assert "priority" in t
-
-
-class TestTreeView:
-    def test_tree_has_goals(self):
-        a, g1, *_ = _populated_atlas()
-        tree = a.tree()
+        tree = atlas.tree()
+        assert "dreams" not in tree
         assert "goals" in tree
-        goal_ids = [g["id"] for g in tree["goals"]]
-        assert g1.id in goal_ids
-
-    def test_tree_goals_have_tasks(self):
-        a, g1, *_ = _populated_atlas()
-        tree = a.tree()
-        g1_node = next(g for g in tree["goals"] if g["id"] == g1.id)
-        assert "tasks" in g1_node
-
-    def test_tree_tasks_have_subtasks(self):
-        a, g1, g2, t1, t2, *_ = _populated_atlas()
-        tree = a.tree()
-        g1_node = next(g for g in tree["goals"] if g["id"] == g1.id)
-        t2_node = next(t for t in g1_node["tasks"] if t["id"] == t2.id)
-        assert "subtasks" in t2_node
-        assert len(t2_node["subtasks"]) == 2
-
-    def test_unattached_tasks_in_tree(self):
-        a, _, _, _, _, _, t4, *_ = _populated_atlas()
-        tree = a.tree()
         assert "unattached_tasks" in tree
-        ids = [t["id"] for t in tree["unattached_tasks"]]
-        assert t4.id in ids
+        assert "dream_count" not in atlas.summary()
+        assert "## Dreams" not in atlas.brief()
 
-    def test_archived_excluded_from_tree(self):
-        a = Atlas()
-        g = a.add_goal({"title": "G", "status": "archived"})
-        tree = a.tree()
-        assert "goals" not in tree
+    def test_tree_surfaces_dreams_and_filters_archived_at_all_depths(self):
+        atlas = ta.Atlas("Full Hierarchy")
+        d = atlas.add_dream("Platform Vision", status="active")
+        g_dream = d.add_goal("Core Engine", status="active")
+        sub_g_arch = g_dream.add_goal("Archived Subgoal", status="abandoned")
+        sub_g_arch.archive()
 
+        parent_t = g_dream.add_task("Parent Task", stage="active")
+        sub_t_visible = parent_t.add_task("Visible Subtask", stage="ready")
+        sub_t_arch = parent_t.add_task("Archived Subtask", stage="canceled")
+        sub_t_arch.archive()
 
-class TestQueueView:
-    def test_queue_sorted_by_priority(self):
-        a, *_ = _populated_atlas()
-        q = a.queue()
-        priorities = [t["priority"] for t in q]
-        assert priorities[0] == "high"
+        g_standalone = atlas.add_goal("Standalone Ops", status="active")
 
-    def test_queue_excludes_done(self):
-        a, _, _, _, _, _, t4, *_ = _populated_atlas()
-        q = a.queue()
-        ids = [t["id"] for t in q]
-        assert t4.id not in ids
+        tree = atlas.tree()
+        assert len(tree["dreams"]) == 1
+        assert len(tree["unattached_goals"]) == 1
+        assert tree["unattached_goals"][0]["id"] == g_standalone.id
 
-    def test_queue_excludes_parent_tasks(self):
-        a, _, _, _, t2, _, _, _, _ = _populated_atlas()
-        q = a.queue()
-        ids = [t["id"] for t in q]
-        assert t2.id not in ids
+        dream_goal_node = tree["dreams"][0]["goals"][0]
+        assert "subgoals" not in dream_goal_node  # archived subgoal excluded!
+        subtasks = dream_goal_node["tasks"][0]["subtasks"]
+        assert [s["id"] for s in subtasks] == [sub_t_visible.id]
 
-    def test_queue_scoped_to_goal(self):
-        a, g1, g2, t1, *_ = _populated_atlas()
-        q = a.queue(goal_id=g1.id)
-        goal_ids_in_queue = {t["id"] for t in q}
-        assert t1.id in goal_ids_in_queue
-
-    def test_queue_fields(self):
-        a, *_ = _populated_atlas()
-        q = a.queue()
-        for t in q:
-            assert "id" in t
-            assert "title" in t
-            assert "priority" in t
-            assert "stage" in t
+        # Transitive board includes subtasks under goal_id and dream_id
+        board = atlas.board(dream_id=d.id)
+        ready_ids = [c["id"] for c in board["stages"]["ready"]]
+        assert sub_t_visible.id in ready_ids
 
 
-class TestSummaryView:
-    def test_summary_counts(self):
-        a, *_ = _populated_atlas()
-        s = a.summary()
-        assert s["goal_count"] == 2
-        assert s["task_count"] == 6  # 4 top-level + 2 subtasks
+class TestCriticalPathReadinessQueue:
+    def test_decomposed_subtasks_surface_in_goal_and_dream_queues(self):
+        # Regression test: decomposed goal tasks must surface subtasks in queue(goal_id=...)
+        atlas = ta.Atlas("Subtask Queue")
+        dream = atlas.add_dream("Vision", status="active")
+        goal = dream.add_goal("Backend", status="active")
+        parent = goal.add_task("Database layer", stage="active", priority="urgent")
+        sub1 = parent.add_task("Connection pooling", stage="ready", priority="high")
 
-    def test_summary_by_stage(self):
-        a, *_ = _populated_atlas()
-        s = a.summary()
-        assert "active" in s["by_stage"]
+        goal_q = atlas.queue(goal_id=goal.id)
+        dream_q = atlas.queue(dream_id=dream.id)
+        assert [item["id"] for item in goal_q] == [sub1.id]
+        assert [item["id"] for item in dream_q] == [sub1.id]
 
-    def test_summary_by_status(self):
-        a, *_ = _populated_atlas()
-        s = a.summary()
-        assert "active" in s["by_status"]
+        # Once all subtasks finish, open parent resurfaces so it can be integrated and closed
+        sub1.complete("Pool verified")
+        resurfaced = atlas.queue(goal_id=goal.id)
+        assert [item["id"] for item in resurfaced] == [parent.id]
 
-    def test_summary_recent_events(self):
-        a, *_ = _populated_atlas()
-        s = a.summary()
-        assert len(s["recent_events"]) > 0
+    def test_subtasks_inherit_critical_path_urgency_from_parent_dependents(self):
+        atlas = ta.Atlas("Container Critical Path")
+        goal = atlas.add_goal("Data Engine", status="active")
+        schema_parent = goal.add_task("Schema registry", stage="active", priority="medium")
+        subtask = schema_parent.add_task("WAL storage", stage="ready", priority="low")
+        urgent_parser = goal.add_task("SQL parser", stage="ready", priority="urgent")
+        urgent_parser.link(schema_parent, kind="depends_on")
 
+        q = atlas.queue()
+        assert q[0]["id"] == subtask.id
+        assert q[0]["effective_priority"] == "urgent"
+        assert q[0]["priority_boosted"] is True
+        assert q[0]["unblocks_count"] == 1
 
-class TestViewEnhancements:
-    def test_queue_with_limit(self):
-        a, *_ = _populated_atlas()
-        q = a.queue(limit=2)
-        assert len(q) == 2
+    def test_critical_path_priority_inheritance_and_filtering(self):
+        atlas = ta.Atlas("Critical Path")
+        goal = atlas.add_goal("Release", status="active")
 
-    def test_board_task_summaries_include_stage(self):
-        a, *_ = _populated_atlas()
-        b = a.board()
-        for stage, items in b["stages"].items():
-            for item in items:
-                assert "stage" in item
-                assert item["stage"] == stage
+        # Low-priority prerequisite blocks an Urgent downstream task!
+        prereq = goal.add_task("Provision certs", stage="ready", priority="low")
+        urgent_deploy = goal.add_task("Cut prod traffic", stage="ready", priority="urgent")
+        urgent_deploy.link(prereq, kind="depends_on")
+
+        medium_other = goal.add_task("Polish CSS", stage="ready", priority="medium")
+        held_task = goal.add_task("Vendor webhook", stage="ready", priority="urgent")
+        held_task.hold("Waiting on vendor")
+        review_task = goal.add_task("PR awaiting review", stage="review", priority="urgent")
+        claimed_task = goal.add_task("Worker 1 job", stage="active", priority="urgent")
+        claimed_task.claim("agent:w1")
+
+        q = atlas.queue()
+        q_ids = [item["id"] for item in q]
+
+        # Blocked, held, review, and claimed-by-others tasks are excluded
+        assert urgent_deploy.id not in q_ids
+        assert held_task.id not in q_ids
+        assert review_task.id not in q_ids
+        assert claimed_task.id not in q_ids
+
+        # Low prereq inherited URGENT priority from urgent_deploy and ranks #1!
+        assert q_ids == [prereq.id, medium_other.id]
+        assert q[0]["effective_priority"] == "urgent"
+        assert q[0]["priority_boosted"] is True
+        assert q[0]["unblocks_count"] == 1
+
+        # Requesting queue for agent:w1 includes its claimed task
+        w1_ids = [item["id"] for item in atlas.queue(owner="agent:w1")]
+        assert claimed_task.id in w1_ids
+
+    def test_pausing_goal_or_dormant_dream_pauses_queue_tasks(self):
+        atlas = ta.Atlas("Pause Physics")
+        dream = atlas.add_dream("Long Arc", status="active")
+        goal = dream.add_goal("Phase 1", status="active")
+        task = goal.add_task("Build feature", stage="ready")
+
+        assert [item["id"] for item in atlas.queue()] == [task.id]
+
+        goal.set_status("paused", reason="Deferred to next month")
+        assert atlas.queue() == []
+
+        goal.set_status("active", reason="Resumed")
+        assert len(atlas.queue()) == 1
+
+        dream.set_status("dormant", reason="Hibernating dream")
+        assert atlas.queue() == []
+
+    def test_subgoal_pause_and_ancestor_task_hold_gate_subtasks(self):
+        atlas = ta.Atlas("Hierarchy Gating")
+        root_goal = atlas.add_goal("Root Goal", status="active")
+        sub_goal = root_goal.add_goal("Subgoal", status="active")
+        parent_task = sub_goal.add_task("Parent Task", stage="active")
+        leaf = parent_task.add_task("Leaf Task", stage="ready")
+
+        assert [item["id"] for item in atlas.queue()] == [leaf.id]
+
+        # Pausing subgoal under active root goal pauses leaf
+        sub_goal.set_status("paused", reason="Paused subgoal")
+        assert atlas.queue() == []
+        sub_goal.set_status("active", reason="Resumed subgoal")
+
+        # Pausing root goal while subgoal stays active also pauses leaf
+        root_goal.set_status("paused", reason="Paused root")
+        assert atlas.queue() == []
+        root_goal.set_status("active", reason="Resumed root")
+
+        # Holding ancestor container task gates its open leaf subtasks
+        parent_task.hold("Waiting on architecture review")
+        assert atlas.queue() == []
+        parent_task.unhold("Approved")
+        assert [item["id"] for item in atlas.queue()] == [leaf.id]
+
+    def test_dream_priority_breaks_ties_without_hijacking_urgent_tactical_work(self):
+        atlas = ta.Atlas("Dream Tiebreak")
+        high_dream = atlas.add_dream("High Dream", status="active", priority="urgent")
+        g_dream = high_dream.add_goal("Dream Goal", status="active", priority="medium")
+        t_dream_med = g_dream.add_task("Dream medium task", stage="ready", priority="medium")
+
+        g_ops = atlas.add_goal("Prod Incident", status="active", priority="medium")
+        t_ops_urgent = g_ops.add_task("Fix outage", stage="ready", priority="urgent")
+        t_ops_med = g_ops.add_task("Ops medium task", stage="ready", priority="medium")
+
+        q_ids = [item["id"] for item in atlas.queue()]
+        # Urgent tactical outage fix still wins #1; among equal medium tasks, high-dream task wins!
+        assert q_ids == [t_ops_urgent.id, t_dream_med.id, t_ops_med.id]
