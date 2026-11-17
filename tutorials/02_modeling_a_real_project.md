@@ -1,328 +1,124 @@
 # Modeling a Real Project
 
-This tutorial walks through a realistic scenario: using `taskatlas` to model a software project with multiple goals, hierarchical task decomposition, cross-cutting dependencies, and evolving state. The goal is to show how the library feels when used on something real.
+This walkthrough models a realistic multi-horizon system using the full `Dream -> Goal -> Subgoal -> Task -> Subtask` hierarchy, causal dependencies, external holds, and open-world stall detection.
 
 ---
 
-## Scenario
+## 1. Anchor With an Optional Dream
 
-You're building a data pipeline platform. There are three major outcomes to deliver this quarter:
-
-1. A reliable ingestion service
-2. A transformation engine
-3. A monitoring dashboard
-
-Each has its own tasks, subtasks, and interdependencies.
-
----
-
-## Set Up the Atlas
+Suppose you are building an autonomous data platform over multiple quarters. A `Dream` captures the enduring north star above individual quarterly milestones:
 
 ```python
 import taskatlas as ta
 
-atlas = ta.Atlas({
-    "name": "Data Pipeline Platform",
-    "meta": {"team": "data-eng", "quarter": "Q3-2025"},
-})
-```
+atlas = ta.Atlas("Data Platform", meta={"org": "data-eng"})
 
-The `meta` field is a free-form dict — use it for any metadata that doesn't fit into the structured fields.
-
----
-
-## Define the Goals
-
-```python
-ingestion = atlas.add_goal({
-    "title": "Reliable ingestion service",
-    "summary": "Accept data from 10+ sources with at-least-once delivery guarantees.",
-    "status": "active",
-    "priority": "urgent",
-    "tags": ["ingestion", "core"],
-})
-
-transform = atlas.add_goal({
-    "title": "Transformation engine",
-    "summary": "SQL-based transformation layer with dependency resolution.",
-    "status": "active",
-    "priority": "high",
-    "tags": ["transform", "core"],
-})
-
-monitoring = atlas.add_goal({
-    "title": "Monitoring dashboard",
-    "summary": "Real-time visibility into pipeline health and data freshness.",
-    "status": "proposed",
-    "priority": "medium",
-    "tags": ["monitoring", "observability"],
-})
-```
-
-Notice that monitoring is still `proposed` — the team hasn't committed to it yet. Goals have their own lifecycle independent of tasks.
-
----
-
-## Decompose into Tasks
-
-### Ingestion tasks
-
-```python
-schema_registry = ingestion.add_task({
-    "title": "Build schema registry",
-    "summary": "Central registry for source schemas with versioning.",
-    "stage": "active",
-    "priority": "urgent",
-    "tags": ["schema", "ingestion"],
-})
-
-kafka_connector = ingestion.add_task({
-    "title": "Implement Kafka connector",
-    "stage": "ready",
-    "priority": "high",
-    "tags": ["kafka", "ingestion"],
-})
-
-s3_connector = ingestion.add_task({
-    "title": "Implement S3 connector",
-    "stage": "inbox",
-    "priority": "medium",
-    "tags": ["s3", "ingestion"],
-})
-
-backfill = ingestion.add_task({
-    "title": "Design backfill mechanism",
-    "stage": "inbox",
-    "priority": "medium",
-    "tags": ["backfill", "ingestion"],
-})
-```
-
-### Transformation tasks
-
-```python
-sql_parser = transform.add_task({
-    "title": "Build SQL parser",
-    "stage": "active",
-    "priority": "high",
-    "tags": ["sql", "transform"],
-})
-
-dag_resolver = transform.add_task({
-    "title": "Implement DAG dependency resolver",
-    "stage": "ready",
-    "priority": "high",
-    "tags": ["dag", "transform"],
-})
-
-scheduling = transform.add_task({
-    "title": "Build scheduling layer",
-    "stage": "inbox",
-    "priority": "medium",
-    "tags": ["scheduling", "transform"],
-})
-```
-
-### Monitoring tasks
-
-```python
-health_api = monitoring.add_task({
-    "title": "Expose pipeline health API",
-    "stage": "inbox",
-    "priority": "medium",
-    "tags": ["api", "monitoring"],
-})
-
-freshness = monitoring.add_task({
-    "title": "Implement data freshness tracking",
-    "stage": "inbox",
-    "priority": "medium",
-    "tags": ["freshness", "monitoring"],
-})
+dream = atlas.add_dream(
+    "Self-Healing Data Platform",
+    vision="Pipelines ingest, transform, and recover from upstream schema drift automatically.",
+    status="active",
+    priority="high",
+)
 ```
 
 ---
 
-## Break Down Complex Tasks with Subtasks
-
-The schema registry is complex enough to warrant subtasks:
+## 2. Define Wave-1 Goals With Falsifiable Criteria
 
 ```python
-schema_registry.add_task({
-    "title": "Design schema versioning model",
-    "stage": "done",
-    "priority": "high",
-})
+ingestion = dream.add_goal(
+    "Reliable ingestion service",
+    summary="Accept events from 10+ sources with at-least-once delivery.",
+    status="active",
+    priority="urgent",
+    criteria=[
+        "Broker restart test passes with zero dropped records",
+        "Schema registry validates payloads in < 2ms",
+    ],
+    tags=["ingestion", "core"],
+)
 
-schema_registry.add_task({
-    "title": "Implement schema storage backend",
-    "stage": "active",
-    "priority": "high",
-})
+transform = dream.add_goal(
+    "SQL transformation engine",
+    summary="DAG-ordered SQL models over ingested streams.",
+    status="active",
+    priority="high",
+    criteria=["Cycle-free model graph execution"],
+    tags=["transform", "core"],
+)
 
-schema_registry.add_task({
-    "title": "Build schema validation endpoint",
-    "stage": "ready",
-    "priority": "medium",
-})
-
-schema_registry.add_task({
-    "title": "Write schema migration tooling",
-    "stage": "inbox",
-    "priority": "low",
-})
+# Standalone operational goal outside any Dream
+ops = atlas.add_goal(
+    "Quarterly credential hygiene",
+    status="active",
+    priority="medium",
+    tags=["security"],
+)
 ```
-
-Now `schema_registry` is both a task (attached to the ingestion goal) and a parent (with four subtasks beneath it).
 
 ---
 
-## Model Dependencies with Links
-
-The transformation engine depends on the schema registry — it needs to know the shapes of the data it's transforming:
+## 3. Decompose Goals Into Tasks and Subtasks
 
 ```python
+schema_registry = ingestion.add_task(
+    "Build schema registry",
+    stage="active",
+    priority="high",
+)
+# Subtasks inherit ingestion's Goal and Dream lineage transitively
+v_model = schema_registry.add_task("Design versioning model", stage="ready", priority="high")
+storage = schema_registry.add_task("Implement SQLite WAL backend", stage="ready", priority="high")
+storage.link(v_model, kind="depends_on")
+
+kafka = ingestion.add_task("Implement Kafka connector", stage="ready", priority="high")
+
+sql_parser = transform.add_task("Build SQL parser", stage="ready", priority="urgent")
+# Cross-goal causal dependency: SQL parser requires schema_registry to complete
 sql_parser.link(schema_registry, kind="depends_on")
-```
 
-The DAG resolver depends on the SQL parser:
-
-```python
-dag_resolver.link(sql_parser, kind="depends_on")
-```
-
-The scheduling layer depends on the DAG resolver:
-
-```python
-scheduling.link(dag_resolver, kind="depends_on")
-```
-
-The monitoring dashboard's freshness tracking depends on the ingestion service being operational:
-
-```python
-freshness.link(kafka_connector, kind="depends_on")
-freshness.link(s3_connector, kind="depends_on")
-```
-
-Cross-goal support relationships:
-
-```python
-monitoring.link(ingestion, kind="supports")
-monitoring.link(transform, kind="supports")
-```
-
-These typed links capture real project structure — dependency chains, support relationships, and cross-cutting concerns — without conflating them with containment.
-
----
-
-## Simulate Work in Progress
-
-A week passes. Work moves forward:
-
-```python
-kafka_connector.move("active", reason="Dev assigned, starting implementation")
-kafka_connector.note("Using confluent-kafka client library, version 2.3")
-
-schema_registry.move("review", reason="Core implementation complete, PR open")
-schema_registry.note("Reviewer: @maria — focused on migration edge cases")
-
-sql_parser.move("blocked", reason="Waiting on schema registry finalization")
-sql_parser.note("Need final schema format before we can parse incoming payloads")
-
-monitoring.set_status("active", reason="Team committed to Q3 delivery after all")
-
-ingestion.note("On track. Schema registry nearly done, Kafka connector in progress.")
+rotate_keys = ops.add_task("Rotate staging IAM keys", stage="ready", priority="medium")
 ```
 
 ---
 
-## Inspect the State of Things
-
-### Board view — where is everything?
+## 4. Simulate Execution, Holds, and Cancellation
 
 ```python
-board = atlas.board()
-for stage, tasks in board["stages"].items():
-    if tasks:
-        print(f"\n{stage.upper()}:")
-        for t in tasks:
-            print(f"  - [{t['priority']}] {t['title']}")
-```
+with atlas.as_actor("agent:data-worker"):
+    # Complete the first leaf subtask with an artifact receipt
+    v_model.complete(
+        "Defined backward-compatible version rules.",
+        artifacts=["docs/schema_versioning.md"],
+    )
 
-### Board scoped to a single goal
+    # External impediment on Kafka without losing its 'ready' workflow stage
+    kafka.hold("Waiting on VPC peering from cloud-infra")
 
-```python
-ingestion_board = atlas.board(goal_id=ingestion.id)
-```
-
-### Tree view — the full hierarchy
-
-```python
-import json
-tree = atlas.tree()
-print(json.dumps(tree, indent=2))
-```
-
-This produces a nested structure showing goals → subgoals → tasks → subtasks, making the project's shape visible at a glance.
-
-### Queue view — what should I work on next?
-
-```python
-queue = atlas.queue()
-for item in queue[:5]:
-    print(f"[{item['priority']}] {item['title']} ({item['stage']})")
-```
-
-The queue surfaces leaf-level actionable tasks sorted by priority, filtering out completed/archived work and parent tasks that exist primarily as containers.
-
-### Progress check
-
-```python
-for goal in atlas.get_goals(status="active"):
-    p = goal.progress()
-    print(f"{goal.title}: {p['done_count']}/{p['task_count']} done ({p['done_ratio']:.0%})")
-```
-
-### Summary
-
-```python
-summary = atlas.summary()
-print(f"Goals: {summary['goal_count']}")
-print(f"Tasks: {summary['task_count']}")
-print(f"By stage: {summary['by_stage']}")
+    # Drop speculative work cleanly without locking goal progress below 100%
+    legacy_csv = ingestion.add_task("Legacy FTP importer", stage="inbox")
+    legacy_csv.cancel(reason="FTP feed retired by upstream team")
 ```
 
 ---
 
-## Context for a Specific Task
-
-When you need the full picture of a single work item — its relationships, notes, recent history:
+## 5. Inspect Horizon Momentum, Queue, and Briefing
 
 ```python
-ctx = sql_parser.context(mode="full")
-print(json.dumps(ctx, indent=2, default=str))
+# Dream progress tracks milestone counts, active wave execution, and stall health
+dp = dream.progress()
+print(dp["stalled"], dp["active_wave"])
+# False {'task_count': 4, 'done_count': 1, 'open_count': 3, 'blocked_count': 2, ...}
+
+# Goal progress traverses subtasks automatically and excludes canceled tasks
+gp = ingestion.progress()
+print(gp["done_count"], gp["task_count"], gp["canceled_count"])
+# 1 3 1
+
+# Ready queue boosts 'storage' to URGENT because 'schema_registry' unblocks urgent 'sql_parser'
+for item in atlas.queue():
+    print(item["effective_priority"], item["title"])
+
+# Single compact Markdown briefing covering Dreams, Goals, Ready Queue, and Impediments
+print(atlas.brief())
 ```
-
-This returns everything relevant: the task's metadata, its links (showing the dependency on schema_registry), its notes, its recent events, and its parent/child structure.
-
-The compact mode gives you just the essentials:
-
-```python
-ctx = sql_parser.context()  # compact by default
-```
-
----
-
-## What We Modeled
-
-In about 60 lines of setup code, this atlas now represents:
-
-- **3 goals** at different lifecycle stages
-- **9 top-level tasks** decomposed across those goals
-- **4 subtasks** under the schema registry
-- **5 typed dependency links** capturing real execution order
-- **2 cross-goal support links**
-- **Ongoing notes** capturing decisions and context
-- **Automatic history** of every mutation
-
-This is the sweet spot `taskatlas` is designed for: rich enough to model real project structure, lean enough that the code reads clearly and the data stays lightweight.

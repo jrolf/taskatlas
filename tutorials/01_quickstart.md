@@ -1,307 +1,122 @@
 # Quickstart: Your First Atlas
 
-This tutorial walks through the fundamental operations of `taskatlas` — creating an atlas, defining goals and tasks, moving work forward, and inspecting the state of things.
+This tutorial walks through the core workflow of `taskatlas` - creating an `Atlas`, defining `Goal` outcomes and `Task` work items, optionally anchoring them to a `Dream`, completing work with deliverable receipts, and inspecting project state.
 
 ---
 
-## Install
+## Install & Import
 
 ```bash
 pip install taskatlas
 ```
 
-## Import
-
 ```python
 import taskatlas as ta
 ```
 
-The entire public API is available through this single import: `Atlas`, `Goal`, `Task`, `Link`, and `Event`.
+The public API exposes `Atlas`, `Dream`, `Goal`, `Task`, `Link`, and `Event`.
 
 ---
 
-## Create an Atlas
+## Create an Atlas (The Sole Factory)
 
-An `Atlas` is the root container — the navigable world where all goals and tasks live.
-
-```python
-atlas = ta.Atlas({"name": "My First Atlas"})
-```
-
-You can also use keyword arguments:
+An `Atlas` is the root container and factory for all work. Every `Dream`, `Goal`, and `Task` is created through the `Atlas` (or a bound parent) so it is always wired into history, queries, and readiness views from birth:
 
 ```python
-atlas = ta.Atlas(name="My First Atlas")
-```
-
-Both forms work throughout the library. Dict-style payloads are the primary pattern because they serialize naturally and are easy to construct from JSON.
-
----
-
-## Create a Goal
-
-A `Goal` represents an intended outcome — something you're trying to achieve, not just a piece of work to do.
-
-```python
-goal = ta.Goal({
-    "title": "Launch the new API",
-    "summary": "Ship a stable, documented v1 of the public API.",
-    "status": "active",
-    "priority": "high",
-    "tags": ["api", "launch"],
-})
-
-atlas.add_goal(goal)
-```
-
-Goals have statuses that reflect their lifecycle:
-
-- `proposed` — under consideration (this is the default)
-- `active` — actively being pursued
-- `paused` — temporarily on hold
-- `achieved` — successfully completed
-- `archived` — no longer relevant
-
----
-
-## Create Tasks
-
-A `Task` represents actionable work — something concrete that can be done.
-
-```python
-task1 = ta.Task({
-    "title": "Write endpoint specifications",
-    "summary": "Document every endpoint with request/response schemas.",
-    "stage": "active",
-    "priority": "high",
-    "tags": ["docs", "api"],
-})
-
-task2 = ta.Task({
-    "title": "Set up CI pipeline",
-    "stage": "inbox",
-    "priority": "medium",
-    "tags": ["infra"],
-})
-
-atlas.add_task(task1)
-atlas.add_task(task2)
-```
-
-Tasks have stages that represent where they are in a workflow:
-
-- `inbox` — captured but not yet triaged (default)
-- `ready` — triaged and ready to start
-- `active` — currently being worked on
-- `blocked` — stuck on something
-- `review` — work is done, awaiting review
-- `done` — completed
-- `archived` — no longer relevant
-
----
-
-## Attach Tasks to Goals
-
-Tasks don't float in isolation — they contribute toward goals:
-
-```python
-goal.attach_task(task1)
-goal.attach_task(task2)
-```
-
-Now both tasks are linked to the goal. You can also create and attach in one step:
-
-```python
-task3 = goal.add_task({
-    "title": "Write integration tests",
-    "stage": "ready",
-    "priority": "high",
-})
-```
-
-This creates a new task *and* attaches it to the goal *and* registers it in the atlas — all in one call.
-
----
-
-## Move Tasks Through Stages
-
-As work progresses, tasks move:
-
-```python
-task2.move("ready", reason="CI tooling selected")
-task2.move("active", reason="Starting setup")
-```
-
-Every call to `.move()` automatically records a history event with the old stage, new stage, timestamp, and your reason.
-
----
-
-## Add Notes
-
-Capture context and decisions as append-only notes:
-
-```python
-task1.note("Decided to use OpenAPI 3.1 format for all specs.")
-task1.note("Need to coordinate with the frontend team on naming.")
-goal.note("Targeting end of Q2 for public launch.")
-```
-
-Each note gets its own ID and timestamp. Notes appear in context summaries and history.
-
----
-
-## Check Progress
-
-Goals track the aggregate state of their attached tasks:
-
-```python
-progress = goal.progress()
-print(progress)
-```
-
-Output:
-
-```python
-{
-    "goal_id": "g-...",
-    "task_count": 3,
-    "by_stage": {"active": 2, "ready": 1},
-    "done_count": 0,
-    "blocked_count": 0,
-    "active_count": 2,
-    "done_ratio": 0.0,
-}
+atlas = ta.Atlas("My First Atlas")
+# Dict payloads and keyword arguments also work everywhere:
+# atlas = ta.Atlas({"name": "My First Atlas"})
 ```
 
 ---
 
-## Retrieve and Filter
+## Create a Goal and Tasks
 
-Find what you need without writing queries:
+A `Goal` represents a convergent, falsifiable outcome (`proposed`, `active`, `paused`, `achieved`, `abandoned`):
 
 ```python
-# All non-archived tasks
-atlas.get_tasks()
-
-# Just the active ones
-atlas.get_tasks(stage="active")
-
-# High-priority tasks attached to a specific goal
-atlas.get_tasks(goal_id=goal.id, priority="high")
-
-# Tasks matching a tag
-atlas.get_tasks(tags=["api"])
-
-# Search by title
-atlas.get_tasks(title_contains="CI")
-
-# Sorted by priority (urgent first)
-atlas.get_tasks(order_by="priority")
+goal = atlas.add_goal(
+    "Launch the public API",
+    summary="Ship a stable, documented v1 of the public API.",
+    status="active",
+    priority="high",
+    criteria=["OpenAPI 3.1 spec published", "Integration tests green"],
+    tags=["api", "launch"],
+)
 ```
 
-The same patterns work for goals:
+Create `Task` items directly under the goal (`inbox`, `ready`, `active`, `review`, `done`, `canceled`):
 
 ```python
-atlas.get_goals(status="active")
-atlas.get_goals(priority="high")
+spec = goal.add_task(
+    "Write endpoint specifications",
+    stage="active",
+    priority="high",
+    tags=["docs", "api"],
+)
+
+tests = goal.add_task(
+    "Write integration tests",
+    stage="ready",
+    priority="urgent",
+    tags=["testing", "api"],
+)
+
+# Express causal prerequisite: 'tests' cannot run until 'spec' is done
+tests.link(spec, kind="depends_on")
+```
+
+*(Note: `Dream` sits optionally above `Goal` via `dream = atlas.add_dream(...)` and `dream.add_goal(...)` when tracking long-horizon visions across multiple waves of goals. You never have to create a `Dream` for straightforward Goal -> Task projects.)*
+
+---
+
+## Check the Ready Queue and Complete Work
+
+`atlas.queue()` computes actual readiness and critical-path urgency. Because `spec` blocks the `urgent` `tests` task, `spec` automatically inherits `urgent` effective priority while `tests` waits until unblocked:
+
+```python
+print(atlas.queue())
+# [{'id': 't-...', 'title': 'Write endpoint specifications',
+#   'priority': 'high', 'effective_priority': 'urgent',
+#   'priority_boosted': True, 'unblocks_count': 1, ...}]
+```
+
+Record narrative notes and finish `spec` with a structured completion receipt:
+
+```python
+spec.note("Standardized error envelopes on RFC 9457 Problem Details.")
+spec.complete(
+    "Published OpenAPI 3.1 schema covering all 14 endpoints.",
+    artifacts=["specs/openapi.yaml"],
+    data={"endpoints": 14},
+)
+```
+
+Completing `spec` automatically unblocks `tests` and surfaces `specs/openapi.yaml` inside `tests.context(mode="full")["satisfied_dependencies"]`.
+
+---
+
+## Inspect Progress, Briefings, and History
+
+```python
+print(goal.progress())
+# {'goal_id': 'g-...', 'task_count': 2, 'done_count': 1, 'done_ratio': 0.5, ...}
+
+# Compact Markdown briefing ready for terminal display or an LLM prompt
+print(atlas.brief())
+
+# Every mutation is recorded automatically in the Atlas event log
+for ev in atlas.recent(limit=5):
+    print(f"{ev.event_type} on {ev.entity_id}: {ev.reason or ''}")
 ```
 
 ---
 
-## View the Board
-
-Get a kanban-style snapshot of all tasks grouped by stage:
+## Save and Load Atomically
 
 ```python
-board = atlas.board()
-print(board)
+atlas.save("my_atlas.json")
+restored = ta.Atlas.load("my_atlas.json")
+
+assert restored.get_goal(goal.id).title == "Launch the public API"
 ```
-
-Output shape:
-
-```python
-{
-    "stages": {
-        "inbox": [],
-        "ready": [{"id": "t-...", "title": "Write integration tests", ...}],
-        "active": [{"id": "t-...", "title": "Write endpoint specifications", ...}, ...],
-        "blocked": [],
-        "review": [],
-        "done": [],
-    }
-}
-```
-
-You can scope it to a single goal:
-
-```python
-atlas.board(goal_id=goal.id)
-```
-
----
-
-## Inspect History
-
-Every mutation — stage changes, priority changes, notes, attachments — is recorded automatically:
-
-```python
-# Recent events across the whole atlas
-for event in atlas.recent(limit=5):
-    print(f"{event.event_type}: {event.entity_id}")
-
-# History of a specific task
-for event in task1.history():
-    print(f"{event.event_type} at {event.timestamp}")
-    if event.reason:
-        print(f"  reason: {event.reason}")
-```
-
----
-
-## Save and Load
-
-Serialize the entire atlas to a JSON-friendly dict:
-
-```python
-import json
-
-payload = atlas.to_dict()
-
-with open("my_atlas.json", "w") as f:
-    json.dump(payload, f, indent=2)
-```
-
-Reload it later:
-
-```python
-with open("my_atlas.json") as f:
-    payload = json.load(f)
-
-atlas2 = ta.Atlas.from_dict(payload)
-
-# Everything is preserved
-restored_goal = atlas2.get_goal(goal.id)
-print(restored_goal.title)  # "Launch the new API"
-```
-
-IDs, relationships, notes, history — everything survives the round-trip.
-
----
-
-## Summary
-
-In this tutorial you learned the core workflow:
-
-1. Create an `Atlas` as the container for all work
-2. Define `Goal` objects for intended outcomes
-3. Define `Task` objects for actionable work
-4. Attach tasks to goals
-5. Move tasks through stages as work progresses
-6. Add notes to capture context
-7. Check progress on goals
-8. Filter and retrieve tasks and goals
-9. View the board
-10. Inspect history
-11. Save and load the atlas
-
-These ten operations cover the vast majority of what you'll do with `taskatlas`. The following tutorials go deeper into each area.
