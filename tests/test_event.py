@@ -1,100 +1,50 @@
-"""Tests for the Event model."""
+"""Tests for the immutable Event model."""
 
 import pytest
 
 from taskatlas._event import Event
 
 
-class TestEventCreation:
-    def test_basic_creation(self):
-        ev = Event(
-            event_type="task_created",
-            entity_id="t-abc12345",
-            entity_type="task",
-        )
-        assert ev.event_type == "task_created"
-        assert ev.entity_id == "t-abc12345"
-        assert ev.entity_type == "task"
-        assert ev.id.startswith("ev-")
-        assert ev.timestamp  # non-empty ISO string
-        assert ev.data == {}
-        assert ev.reason is None
-
-    def test_with_data_and_reason(self):
+class TestEventImmutabilityAndFields:
+    def test_creation_and_actor_provenance(self):
         ev = Event(
             event_type="task_stage_changed",
             entity_id="t-abc12345",
             entity_type="task",
-            data={"old_stage": "inbox", "new_stage": "active"},
-            reason="Starting work",
+            data={"old_stage": "ready", "new_stage": "active", "nested": [1, 2]},
+            reason="Picked up task",
+            actor="agent:worker-1",
         )
-        assert ev.data["old_stage"] == "inbox"
-        assert ev.reason == "Starting work"
+        assert ev.id.startswith("ev-")
+        assert ev.event_type == "task_stage_changed"
+        assert ev.entity_id == "t-abc12345"
+        assert ev.actor == "agent:worker-1"
+        assert ev.reason == "Picked up task"
+        assert ev.data["nested"] == (1, 2)
 
-    def test_custom_id(self):
-        ev = Event(
-            id="ev-custom01",
-            event_type="goal_created",
-            entity_id="g-abc12345",
-            entity_type="goal",
-        )
-        assert ev.id == "ev-custom01"
-
-    def test_custom_timestamp(self):
-        ts = "2025-01-15T10:30:00+00:00"
-        ev = Event(
-            event_type="goal_created",
-            entity_id="g-abc12345",
-            entity_type="goal",
-            timestamp=ts,
-        )
-        assert ev.timestamp == ts
-
-
-class TestEventSerialization:
-    def test_to_dict(self):
+    def test_attribute_and_data_mutation_blocked(self):
         ev = Event(
             event_type="note_added",
-            entity_id="t-abc12345",
-            entity_type="task",
-            data={"note_id": "n-00112233"},
-            reason="context note",
+            entity_id="d-abc12345",
+            entity_type="dream",
+            data={"note_id": "n-11111111"},
         )
-        d = ev.to_dict()
-        assert d["event_type"] == "note_added"
-        assert d["entity_id"] == "t-abc12345"
-        assert d["data"]["note_id"] == "n-00112233"
-        assert d["reason"] == "context note"
-        assert "id" in d
-        assert "timestamp" in d
+        with pytest.raises(AttributeError, match="immutable"):
+            ev.reason = "tampered"
 
-    def test_round_trip(self):
+        with pytest.raises(TypeError):
+            ev.data["note_id"] = "n-tampered"
+
+    def test_round_trip_serialization(self):
         ev1 = Event(
-            event_type="priority_changed",
-            entity_id="g-abc12345",
-            entity_type="goal",
-            data={"old": "medium", "new": "high"},
-            reason="escalated",
+            event_type="dream_created",
+            entity_id="d-abc12345",
+            entity_type="dream",
+            data={"title": "Research Lab"},
+            reason="Initial seed",
+            actor="human:james",
         )
-        d = ev1.to_dict()
-        ev2 = Event.from_dict(d)
-
-        assert ev2.id == ev1.id
-        assert ev2.event_type == ev1.event_type
-        assert ev2.entity_id == ev1.entity_id
-        assert ev2.entity_type == ev1.entity_type
-        assert ev2.timestamp == ev1.timestamp
-        assert ev2.data == ev1.data
-        assert ev2.reason == ev1.reason
-
-
-class TestEventRepr:
-    def test_repr(self):
-        ev = Event(
-            event_type="task_created",
-            entity_id="t-abc12345",
-            entity_type="task",
-        )
-        r = repr(ev)
-        assert "task_created" in r
-        assert "t-abc12345" in r
+        restored = Event.from_dict(ev1.to_dict())
+        assert restored == ev1
+        assert restored.actor == "human:james"
+        assert restored.data["title"] == "Research Lab"

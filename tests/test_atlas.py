@@ -1,240 +1,190 @@
-"""Tests for the Atlas class."""
+"""Tests for Atlas factory enforcement, actor provenance, cursors, diffs, and compaction."""
 
 import pytest
 
-from taskatlas._atlas import Atlas
-from taskatlas._goal import Goal
-from taskatlas._task import Task
+import taskatlas as ta
 
 
-class TestAtlasCreation:
-    def test_basic(self):
-        a = Atlas({"name": "My Atlas"})
-        assert a.name == "My Atlas"
-        assert a.created_at
-        assert a._goals == {}
-        assert a._tasks == {}
+class TestAtlasFactoryAndIsolation:
+    def test_standalone_instantiation_rejected_with_guidance(self):
+        with pytest.raises(TypeError, match="Cannot instantiate Dream directly"):
+            ta.Dream({"title": "Unbound"})
+        with pytest.raises(TypeError, match="Cannot instantiate Goal directly"):
+            ta.Goal({"title": "Unbound"})
+        with pytest.raises(TypeError, match="Cannot instantiate Task directly"):
+            ta.Task({"title": "Unbound"})
 
-    def test_kwargs(self):
-        a = Atlas(name="My Atlas")
-        assert a.name == "My Atlas"
+    def test_ergonomic_creation_styles(self):
+        a1 = ta.Atlas("Positional Name")
+        a2 = ta.Atlas({"name": "Dict Name"})
+        a3 = ta.Atlas(name="Kwarg Name")
+        assert a1.name == "Positional Name"
+        assert a2.name == "Dict Name"
+        assert a3.name == "Kwarg Name"
 
-    def test_defaults(self):
-        a = Atlas()
-        assert a.name == ""
-        assert len(a.task_stages) == 7
-        assert len(a.goal_statuses) == 5
+        g1 = a1.add_goal("Goal Positional", priority="high")
+        g2 = a1.add_goal({"title": "Goal Dict", "status": "active"})
+        t1 = g2.add_task("Task Positional", stage="ready")
+        assert g1.priority == "high"
+        assert t1.stage == "ready"
+        assert a1.get_entity(t1.id) is t1
 
-    def test_custom_stages(self):
-        a = Atlas({"task_stages": ["todo", "doing", "done"]})
-        assert a.task_stages == ("todo", "doing", "done")
+    def test_custom_stages_removed_and_unknown_options_rejected(self):
+        with pytest.raises(ValueError, match="Unknown Atlas option"):
+            ta.Atlas("Bad", task_stages=["todo", "done"])
 
-    def test_repr(self):
-        a = Atlas({"name": "Test"})
-        assert "Test" in repr(a)
+        atlas = ta.Atlas("Strict")
+        with pytest.raises(ValueError, match="Unknown Task option"):
+            atlas.add_task("Typo", priorty="high")
 
+    def test_passing_instance_to_add_directs_to_attach(self):
+        atlas = ta.Atlas("Add vs Attach")
+        goal = atlas.add_goal("G")
+        task = atlas.add_task("T")
 
-class TestAtlasAddGoal:
-    def test_add_goal_dict(self):
-        a = Atlas()
-        g = a.add_goal({"title": "Ship v0", "priority": "high"})
-        assert isinstance(g, Goal)
-        assert g.id in a._goals
-        assert g._atlas is a
+        with pytest.raises(TypeError, match="attach_task"):
+            goal.add_task(task)
 
-    def test_add_goal_instance(self):
-        a = Atlas()
-        g = Goal({"title": "Ship v0"})
-        result = a.add_goal(g)
-        assert result is g
-        assert g._atlas is a
+    def test_cross_atlas_attachment_and_linking_rejected(self):
+        a1 = ta.Atlas("One")
+        a2 = ta.Atlas("Two")
+        g1 = a1.add_goal("G1")
+        t2 = a2.add_task("T2")
 
-    def test_add_goal_emits_event(self):
-        a = Atlas()
-        g = a.add_goal({"title": "Ship v0"})
-        events = a.get_events(event_type="goal_created")
-        assert len(events) == 1
-        assert events[0].entity_id == g.id
-
-    def test_duplicate_same_instance_ok(self):
-        a = Atlas()
-        g = Goal({"title": "G"})
-        a.add_goal(g)
-        result = a.add_goal(g)
-        assert result is g
-
-    def test_duplicate_different_instance_raises(self):
-        a = Atlas()
-        a.add_goal({"id": "g-dup00001", "title": "First"})
-        with pytest.raises(ValueError, match="already exists"):
-            a.add_goal({"id": "g-dup00001", "title": "Second"})
-
-    def test_add_goal_invalid_type_raises(self):
-        a = Atlas()
-        with pytest.raises(TypeError):
-            a.add_goal(42)
+        with pytest.raises(ValueError, match="different Atlas"):
+            g1.attach_task(t2)
+        with pytest.raises(ValueError, match="different Atlas"):
+            g1.link(t2, kind="relates_to")
 
 
-class TestAtlasAddTask:
-    def test_add_task_dict(self):
-        a = Atlas()
-        t = a.add_task({"title": "Draft PRD"})
-        assert isinstance(t, Task)
-        assert t.id in a._tasks
-        assert t._atlas is a
+class TestActorProvenance:
+    def test_as_actor_context_stamps_events_and_notes(self):
+        atlas = ta.Atlas("Provenance", actor="system:init")
+        goal = atlas.add_goal("Core API")
+        assert goal.history()[0].actor == "system:init"
 
-    def test_add_task_instance(self):
-        a = Atlas()
-        t = Task({"title": "Draft PRD"})
-        result = a.add_task(t)
-        assert result is t
+        with atlas.as_actor("agent:planner"):
+            task = goal.add_task("Draft endpoints", stage="ready")
+            note = task.note("Using OpenAPI 3.1")
+            assert note["actor"] == "agent:planner"
+            assert task.history()[0].actor == "agent:planner"
 
-    def test_add_task_emits_event(self):
-        a = Atlas()
-        t = a.add_task({"title": "Work"})
-        events = a.get_events(event_type="task_created")
-        assert len(events) == 1
-        assert events[0].entity_id == t.id
+            # Explicit call-site actor overrides active context
+            task.move("active", reason="Picked up", actor="agent:builder")
+            assert task.history()[0].actor == "agent:builder"
 
-
-class TestAtlasRetrieval:
-    def test_get_goal(self):
-        a = Atlas()
-        g = a.add_goal({"title": "G"})
-        assert a.get_goal(g.id) is g
-
-    def test_get_task(self):
-        a = Atlas()
-        t = a.add_task({"title": "T"})
-        assert a.get_task(t.id) is t
-
-    def test_get_goal_not_found(self):
-        a = Atlas()
-        with pytest.raises(KeyError, match="No goal"):
-            a.get_goal("g-nonexist")
-
-    def test_get_task_not_found(self):
-        a = Atlas()
-        with pytest.raises(KeyError, match="No task"):
-            a.get_task("t-nonexist")
-
-    def test_same_instance_returned(self):
-        a = Atlas()
-        g = a.add_goal({"title": "G"})
-        assert a.get_goal(g.id) is g
-
-    def test_get_goals_filtered(self):
-        a = Atlas()
-        a.add_goal({"title": "A", "status": "active", "priority": "high"})
-        a.add_goal({"title": "B", "status": "proposed", "priority": "low"})
-        result = a.get_goals(status="active")
-        assert len(result) == 1
-        assert result[0].title == "A"
-
-    def test_get_tasks_filtered(self):
-        a = Atlas()
-        a.add_task({"title": "A", "stage": "active", "priority": "high"})
-        a.add_task({"title": "B", "stage": "inbox", "priority": "low"})
-        result = a.get_tasks(stage="active")
-        assert len(result) == 1
-        assert result[0].title == "A"
-
-    def test_get_tasks_by_goal_id(self):
-        a = Atlas()
-        g = a.add_goal({"title": "G"})
-        t1 = a.add_task({"title": "T1"})
-        t2 = a.add_task({"title": "T2"})
-        g.attach_task(t1)
-        result = a.get_tasks(goal_id=g.id)
-        assert len(result) == 1
-        assert result[0].id == t1.id
-
-    def test_get_tasks_ordered(self):
-        a = Atlas()
-        a.add_task({"title": "Low", "priority": "low"})
-        a.add_task({"title": "Urgent", "priority": "urgent"})
-        a.add_task({"title": "High", "priority": "high"})
-        result = a.get_tasks(order_by="priority")
-        assert result[0].title == "Urgent"
-        assert result[1].title == "High"
+        # Context restores prior actor cleanly
+        assert atlas.actor == "system:init"
+        planner_events = atlas.get_events(actor="agent:planner")
+        assert len(planner_events) >= 2
 
 
-class TestAtlasEvents:
-    def test_get_events(self):
-        a = Atlas()
-        a.add_goal({"title": "G"})
-        a.add_task({"title": "T"})
-        events = a.get_events()
-        assert len(events) == 2
+class TestTemporalCursorsAndDiffs:
+    def test_cursor_and_events_since(self):
+        atlas = ta.Atlas("Timeline")
+        assert atlas.cursor is None
 
-    def test_get_events_by_entity(self):
-        a = Atlas()
-        g = a.add_goal({"title": "G"})
-        a.add_task({"title": "T"})
-        events = a.get_events(entity_id=g.id)
-        assert len(events) == 1
+        g = atlas.add_goal("G", status="active")
+        checkpoint = atlas.cursor
+        assert checkpoint.startswith("ev-")
 
-    def test_recent(self):
-        a = Atlas()
-        for i in range(30):
-            a.add_task({"title": f"T{i}"})
-        recent = a.recent(limit=5)
-        assert len(recent) == 5
+        t1 = g.add_task("T1", stage="ready")
+        t1.move("active", reason="Started")
 
-    def test_mutation_events_in_atlas(self):
-        a = Atlas()
-        t = a.add_task({"title": "Work"})
-        t.move("active", reason="Starting")
-        events = a.get_events(entity_id=t.id)
-        types = [e.event_type for e in events]
-        assert "task_created" in types
-        assert "task_stage_changed" in types
+        delta = atlas.events_since(checkpoint)
+        # Chronological (oldest first): task_created -> task_attached_to_goal -> task_stage_changed
+        assert [e.event_type for e in delta] == [
+            "task_created",
+            "task_attached_to_goal",
+            "task_stage_changed",
+        ]
+
+        with pytest.raises(KeyError, match="not found"):
+            atlas.events_since("ev-deadbeef")
+
+        # Timestamp cursor returns strictly newer events
+        first_ts = atlas.events_since(None)[0].timestamp
+        newer = atlas.events_since(first_ts)
+        assert all(e.timestamp > first_ts for e in newer)
+
+    def test_snapshot_diff_tracks_changes_and_unblocking(self):
+        before = ta.Atlas("Snapshot")
+        goal = before.add_goal("Launch", status="active")
+        prereq = goal.add_task("Database migration", stage="active", priority="high")
+        downstream = goal.add_task("Deploy service", stage="ready", priority="urgent")
+        downstream.link(prereq, kind="depends_on")
+        assert downstream.is_blocked is True
+
+        after = before.copy()
+        after_prereq = after.get_task(prereq.id)
+        after_prereq.complete(
+            "Migration applied cleanly",
+            artifacts=["migrations/001.sql"],
+        )
+        added = after.get_goal(goal.id).add_task("Smoke test", stage="ready")
+        added.note("Verify health endpoint")
+
+        diff = before.diff(after)
+        assert len(diff["tasks_added"]) == 1
+        assert diff["tasks_added"][0]["id"] == added.id
+        assert prereq.id in diff["task_changes"]
+        assert diff["task_changes"][prereq.id]["stage"] == {
+            "before": "active",
+            "after": "done",
+        }
+        assert [u["id"] for u in diff["newly_unblocked_tasks"]] == [downstream.id]
+        assert len(diff["notes_added"]) == 1
+        assert diff["new_event_count"] >= 3
 
 
-class TestAtlasGoalTaskIntegration:
-    def test_goal_add_task_registers_in_atlas(self):
-        a = Atlas()
-        g = a.add_goal({"title": "G"})
-        t = g.add_task({"title": "T"})
-        assert t.id in a._tasks
-        assert t._atlas is a
+class TestAtlasCompaction:
+    def test_compact_archives_and_prunes_safely(self):
+        atlas = ta.Atlas("Long Running")
+        g_done = atlas.add_goal("Old Milestone", status="achieved")
+        t_done = g_done.add_task("Old Task", stage="ready")
+        t_done.complete("Finished months ago")
 
-    def test_task_add_subtask_registers_in_atlas(self):
-        a = Atlas()
-        t1 = a.add_task({"title": "Parent"})
-        t2 = t1.add_task({"title": "Child"})
-        assert t2.id in a._tasks
-        assert t2._atlas is a
+        g_active = atlas.add_goal("Current Milestone", status="active")
+        t_prereq_done = g_active.add_task("Shared Prereq", stage="ready")
+        t_prereq_done.complete("Done, but active task still links to it")
+        t_open = g_active.add_task("Open Task", stage="ready")
+        t_open.link(t_prereq_done, kind="depends_on")
 
-    def test_goal_add_subgoal_registers_in_atlas(self):
-        a = Atlas()
-        g1 = a.add_goal({"title": "Parent"})
-        g2 = g1.add_goal({"title": "Child"})
-        assert g2.id in a._goals
-        assert g2._atlas is a
+        report = atlas.compact(
+            archive_terminal_tasks=True,
+            archive_terminal_goals=True,
+            prune_archived=True,
+            keep_recent_events=5,
+            actor="system:compactor",
+        )
 
-    def test_goal_get_tasks_returns_objects(self):
-        a = Atlas()
-        g = a.add_goal({"title": "G"})
-        t1 = g.add_task({"title": "T1"})
-        t2 = g.add_task({"title": "T2"})
-        tasks = g.get_tasks()
-        assert len(tasks) == 2
-        assert t1 in tasks
-        assert t2 in tasks
+        # Old Milestone and Old Task had no active dependents -> pruned into ledger
+        assert t_done.id not in atlas._tasks
+        assert g_done.id not in atlas._goals
+        assert report["pruned_tasks"] == 1
+        assert report["pruned_goals"] == 1
 
-    def test_task_get_subtasks_returns_objects(self):
-        a = Atlas()
-        t1 = a.add_task({"title": "Parent"})
-        t2 = t1.add_task({"title": "Child"})
-        children = t1.get_tasks()
-        assert len(children) == 1
-        assert children[0] is t2
+        # t_prereq_done is archived, NOT pruned while g_active or t_open remains active
+        assert t_prereq_done.id in atlas._tasks
+        assert atlas.get_task(t_prereq_done.id).archived is True
+        # Active goal retains completion credit (1/2 = 0.5) after compaction!
+        assert g_active.progress()["done_count"] == 1
+        assert g_active.progress()["done_ratio"] == 0.5
+        assert atlas.meta["_compaction_ledger"]["done_tasks"] == 1
+        assert atlas.meta["_compaction_ledger"]["achieved_goals"] == 1
+        assert len(atlas.get_events()) <= 5
 
-    def test_attach_task_by_id(self):
-        a = Atlas()
-        g = a.add_goal({"title": "G"})
-        t = a.add_task({"title": "T"})
-        g.attach_task(t.id)
-        assert t.id in g.task_ids
-        assert g.id in t.goal_ids
+    def test_cross_wired_add_task_and_explicit_id_validation(self):
+        atlas = ta.Atlas("Cross Wire")
+        g1 = atlas.add_goal("G1")
+        g2 = atlas.add_goal("G2")
+        parent = g1.add_task("Parent")
+        child = parent.add_task("Subtask also attached to G2", goal_ids=[g2.id])
+
+        assert child.id in parent.child_task_ids
+        assert child.id in g2.task_ids
+        assert atlas.copy().get_task(child.id).parent_task_id == parent.id
+
+        with pytest.raises(ValueError, match="Expected prefix"):
+            atlas.add_task("Bad ID", id="ev-12345678")
+        assert len(atlas.get_tasks()) == 2
