@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taskatlas"
-version = "0.0.2"
+version = "0.1.0"
 description = "A lean, zero-dependency Python engine for Dreams, Goals, Tasks, causal readiness, and operational continuity."
 readme = "README.md"
 license = "MIT"

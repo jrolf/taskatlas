@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.1.0] - 2026-11-18
+
 ### Added
 - **Optional `Dream` horizon (`ta.Dream`, `d-` prefix):** Top-level open-world vision layer above `Goal` with `vision`, statuses (`seed`, `active`, `dormant`, `realized`, `abandoned`), milestone momentum tracking (`dream.progress()`), and automatic stall detection (`no_active_goals`, `no_open_tasks`, `all_tasks_blocked`). Views use progressive disclosure so zero-dream Atlases have zero dream clutter.
 - **Goal acceptance criteria & outcomes:** `Goal` now supports falsifiable `criteria` (`add_criterion()`, `remove_criterion()`), `outcome` summaries, and explicit `achieve()` / `abandon()` lifecycle helpers.
@@ -69,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 <!-- Release links -->
-[Unreleased]: https://github.com/jrolf/taskatlas/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/jrolf/taskatlas/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/jrolf/taskatlas/compare/v0.0.2...v0.1.0
 [0.0.2]: https://github.com/jrolf/taskatlas/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/jrolf/taskatlas/releases/tag/v0.0.1
