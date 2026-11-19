@@ -366,6 +366,15 @@ def dispatch_tool(atlas, tool_name, arguments=None, *, actor=None):
             hint="Pass a JSON object matching the tool's parameter schema.",
         )
 
+    allowed_params = set(_SCHEMA_BY_NAME[tool_name]["parameters"]["properties"])
+    unknown_params = set(args) - allowed_params
+    if unknown_params:
+        return _err(
+            tool_name,
+            f"Unknown parameter(s) for {tool_name!r}: {sorted(unknown_params)}",
+            hint=f"Allowed parameters: {sorted(allowed_params)}",
+        )
+
     try:
         if tool_name == "atlas_orient":
             fmt = args.get("format", "brief")

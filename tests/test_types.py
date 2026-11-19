@@ -56,3 +56,18 @@ class TestUnsetSentinel:
         assert not UNSET
         assert repr(UNSET) == "UNSET"
         assert _Unset() is UNSET
+
+
+class TestPackageVersionSync:
+    def test_dunder_version_matches_pyproject_toml(self):
+        import re
+        from pathlib import Path
+
+        import taskatlas as ta
+
+        pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, flags=re.M)
+        assert match is not None
+        assert ta.__version__ == match.group(1)

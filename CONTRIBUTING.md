@@ -49,11 +49,10 @@ Feature branches should be named descriptively, e.g. `fix/dependency-cycle-check
 
 ## Releasing (maintainers only)
 
-1. Merge `develop` -> `main` via pull request
-2. Bump the version in `pyproject.toml` and `taskatlas/__init__.py`
-3. Add a `[x.y.z]` entry to `CHANGELOG.md`
-4. Push to `main` (and tag `vX.Y.Z` for GitHub Releases)
-5. GitHub Actions will build and publish to PyPI automatically
+1. Bump the version in `pyproject.toml` and `taskatlas/__init__.py` on `develop`
+2. Promote `[Unreleased]` to a dated `[x.y.z]` entry in `CHANGELOG.md` on `develop`
+3. Open and merge a pull request from `develop` -> `main`
+4. GitHub Actions (`publish.yml`) verifies version alignment, lint, and tests, then builds and publishes to PyPI automatically (optionally tag `vX.Y.Z` on `main` for GitHub Releases)
 
 ---
 

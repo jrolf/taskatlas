@@ -152,3 +152,22 @@ class TestAgentToolSeam:
         orient_fn = atlas.as_tools()[0]["fn"]
         bad_call = orient_fn(12345)
         assert bad_call["ok"] is False
+
+        # Unknown/hallucinated parameter keys are rejected instead of silently ignored
+        open_task = atlas.add_task("Guard against hallucinated key", stage="active")
+        bad_complete = atlas.dispatch(
+            "atlas_complete_task",
+            {"task_id": open_task.id, "status": "canceled"},
+        )
+        assert bad_complete["ok"] is False
+        assert "Unknown parameter" in bad_complete["error"]
+        assert "resolution" in bad_complete["hint"]
+        assert open_task.stage == "active"
+
+        bad_hold = atlas.dispatch(
+            "atlas_update_task",
+            {"task_id": open_task.id, "hold": "Waiting on key"},
+        )
+        assert bad_hold["ok"] is False
+        assert "hold_reason" in bad_hold["hint"]
+        assert open_task.is_held is False
