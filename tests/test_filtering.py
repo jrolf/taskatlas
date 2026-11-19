@@ -1,169 +1,75 @@
-"""Tests for the filtering engine."""
+"""Tests for Atlas query filtering across Dreams, Goals, and Tasks."""
 
 import pytest
 
-from taskatlas._filtering import filter_items, sort_items
-from taskatlas._task import Task
-from taskatlas._goal import Goal
+import taskatlas as ta
 
 
-def _make_tasks():
-    """Create a set of tasks for filtering tests."""
-    return [
-        Task({"id": "t-00000001", "title": "Alpha", "stage": "active", "priority": "high", "tags": ["core"]}),
-        Task({"id": "t-00000002", "title": "Beta", "stage": "ready", "priority": "medium", "tags": ["api"]}),
-        Task({"id": "t-00000003", "title": "Gamma design", "stage": "blocked", "priority": "urgent", "tags": ["core", "api"]}),
-        Task({"id": "t-00000004", "title": "Delta", "stage": "done", "priority": "low", "tags": ["docs"]}),
-        Task({"id": "t-00000005", "title": "Epsilon", "stage": "archived", "priority": "medium", "tags": ["old"]}),
-    ]
+def _build_query_atlas():
+    atlas = ta.Atlas("Filter Suite")
+    d1 = atlas.add_dream("Research Lab", status="active", priority="high", tags=["ai"])
+    d2 = atlas.add_dream("Idle Vision", status="active", priority="low")
+
+    g1 = d1.add_goal("Ingestion", status="active", priority="urgent", tags=["data"])
+    sub_g = g1.add_goal("Connectors", status="active", priority="high")
+    g_standalone = atlas.add_goal("Maintenance", status="proposed", priority="low")
+
+    t1 = sub_g.add_task("Kafka source", stage="active", priority="urgent", tags=["kafka", "core"])
+    sub_t = t1.add_task("Offset commit", stage="ready", priority="high", tags=["kafka"])
+    t2 = g_standalone.add_task("Rotate logs", stage="ready", priority="low", tags=["ops"])
+    t2.hold("Waiting on cron window")
+
+    t_arch = g_standalone.add_task("Old script", stage="inbox")
+    t_arch.cancel("Obsolete", archive=True)
+
+    t1.claim("agent:w1")
+    return atlas, d1, d2, g1, sub_g, g_standalone, t1, sub_t, t2, t_arch
 
 
-class TestFilterTasks:
-    def test_no_filters_excludes_archived(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks)
-        assert len(result) == 4
-        assert all(t.stage != "archived" for t in result)
+class TestTransitiveAndStateFiltering:
+    def test_transitive_dream_and_goal_filters(self):
+        atlas, d1, _, g1, sub_g, _, t1, sub_t, t2, _ = _build_query_atlas()
 
-    def test_include_archived(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, archived=True)
-        assert len(result) == 1
-        assert result[0].id == "t-00000005"
+        # Querying by root goal g1 finds tasks under child sub_g and nested sub_t!
+        g1_tasks = atlas.get_tasks(goal_id=g1.id)
+        assert set(g1_tasks) == {t1, sub_t}
 
-    def test_filter_by_stage(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, stage="active")
-        assert len(result) == 1
-        assert result[0].id == "t-00000001"
+        # Querying by dream d1 finds both g1 and sub_g, and both t1 and sub_t!
+        assert set(atlas.get_goals(dream_id=d1.id)) == {g1, sub_g}
+        assert set(atlas.get_tasks(dream_id=d1.id)) == {t1, sub_t}
 
-    def test_filter_by_priority(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, priority="high")
-        assert len(result) == 1
-        assert result[0].id == "t-00000001"
+        # Tasks without any dream or without any goal
+        assert atlas.get_tasks(dream_id=None) == [t2]
+        orphan = atlas.add_task("Unattached chore", stage="inbox")
+        assert atlas.get_tasks(goal_id=None) == [orphan]
 
-    def test_filter_by_tags(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, tags=["core"])
-        assert len(result) == 2
+    def test_stalled_blocked_held_and_claimed_filters(self):
+        atlas, d1, d2, _, _, _, t1, _, t2, _ = _build_query_atlas()
 
-    def test_filter_by_tags_any_match(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, tags=["api", "docs"])
-        assert len(result) == 3
+        assert atlas.get_dreams(stalled=True) == [d2]
+        assert atlas.get_dreams(stalled=False) == [d1]
+        assert atlas.get_tasks(blocked=True) == [t2]
+        assert atlas.get_tasks(held=True) == [t2]
+        assert atlas.get_tasks(claimed=True) == [t1]
+        assert atlas.get_tasks(owner="agent:w1") == [t1]
 
-    def test_title_contains(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, title_contains="design")
-        assert len(result) == 1
-        assert result[0].id == "t-00000003"
+    def test_archived_modes_and_callable_where(self):
+        atlas, *_, t_arch = _build_query_atlas()
 
-    def test_title_contains_case_insensitive(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, title_contains="ALPHA")
-        assert len(result) == 1
+        assert t_arch not in atlas.get_tasks()
+        assert atlas.get_tasks(archived=True) == [t_arch]
+        assert t_arch in atlas.get_tasks(archived=None)
 
-    def test_blocked_filter(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, blocked=True)
-        assert len(result) == 1
-        assert result[0].stage == "blocked"
+        kafka_only = atlas.get_tasks(where=lambda t: "Offset" in t.title)
+        assert len(kafka_only) == 1
 
-    def test_conjunctive(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, priority="high", stage="active")
-        assert len(result) == 1
-        assert result[0].id == "t-00000001"
+    def test_sorting_direction_and_validation(self):
+        atlas, *_ = _build_query_atlas()
 
-    def test_conjunctive_no_match(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, priority="high", stage="blocked")
-        assert len(result) == 0
+        desc = atlas.get_tasks(order_by="priority")
+        asc = atlas.get_tasks(order_by="priority", descending=False)
+        assert desc[0].priority == "urgent"
+        assert asc[0].priority == "low"
 
-    def test_filter_by_id(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, id="t-00000002")
-        assert len(result) == 1
-
-
-class TestFilterGoals:
-    def test_filter_by_status(self):
-        goals = [
-            Goal({"title": "A", "status": "active"}),
-            Goal({"title": "B", "status": "proposed"}),
-            Goal({"title": "C", "status": "archived"}),
-        ]
-        result = filter_items(goals, status="active")
-        assert len(result) == 1
-        assert result[0].title == "A"
-
-    def test_archived_default_excluded(self):
-        goals = [
-            Goal({"title": "A", "status": "active"}),
-            Goal({"title": "B", "status": "archived"}),
-        ]
-        result = filter_items(goals)
-        assert len(result) == 1
-
-
-class TestSorting:
-    def test_sort_by_priority(self):
-        tasks = _make_tasks()
-        active = [t for t in tasks if t.stage != "archived"]
-        result = sort_items(active, "priority")
-        priorities = [t.priority for t in result]
-        assert priorities[0] == "urgent"
-        assert priorities[-1] == "low"
-
-    def test_sort_by_title(self):
-        tasks = _make_tasks()
-        result = sort_items(tasks, "title")
-        assert result[0].title == "Alpha"
-        assert result[-1].title == "Gamma design"
-
-    def test_filter_with_order_by(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, tags=["core"], order_by="priority")
-        assert result[0].priority == "urgent"
-        assert result[1].priority == "high"
-
-
-class TestMultiValueFiltering:
-    def test_stage_list_filter(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, stage=["active", "blocked"])
-        stages = {t.stage for t in result}
-        assert stages <= {"active", "blocked"}
-        assert len(result) >= 1
-
-    def test_priority_list_filter(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, priority=["high", "urgent"])
-        for t in result:
-            assert t.priority in ("high", "urgent")
-
-
-class TestLimitParameter:
-    def test_limit_on_tasks(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, limit=2)
-        assert len(result) == 2
-
-    def test_limit_with_order(self):
-        tasks = _make_tasks()
-        result = filter_items(tasks, order_by="priority", limit=1)
-        assert len(result) == 1
-        assert result[0].priority == "urgent"
-
-
-class TestFilterValidation:
-    def test_unknown_key_raises(self):
-        tasks = _make_tasks()
         with pytest.raises(ValueError, match="Unknown filter key"):
-            filter_items(tasks, staeg="active")
-
-    def test_multiple_unknown_keys_raises(self):
-        tasks = _make_tasks()
-        with pytest.raises(ValueError, match="Unknown filter key"):
-            filter_items(tasks, staeg="active", priorty="high")
+            atlas.get_tasks(nonexistent=True)

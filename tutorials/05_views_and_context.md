@@ -1,364 +1,100 @@
-# Views and Context
+# Views, Readiness Queue, Context, and Briefings
 
-`taskatlas` provides multiple ways to look at the same body of work. Each view answers a different question, and the `context()` method gives you focused situational awareness on any single entity.
-
-This tutorial walks through all the built-in views and shows when to use each one.
+`taskatlas` exposes structured Python views (`board`, `tree`, `queue`, `summary`), hydrated entity `context()`, and token-tight Markdown `brief()` renderers.
 
 ---
 
 ## Setup
 
-We'll build a project with enough structure to make the views interesting:
-
 ```python
 import taskatlas as ta
-import json
 
-atlas = ta.Atlas({"name": "Views Demo"})
+atlas = ta.Atlas("Views Demo")
+dream = atlas.add_dream("Unified Developer Portal", status="active", priority="high")
 
-# Goals
-backend = atlas.add_goal({
-    "title": "Backend service",
-    "status": "active",
-    "priority": "high",
-    "tags": ["backend"],
-})
+backend = dream.add_goal("Backend API", status="active", priority="urgent")
+frontend = dream.add_goal("Web UI", status="active", priority="high")
 
-frontend = atlas.add_goal({
-    "title": "Frontend app",
-    "status": "active",
-    "priority": "high",
-    "tags": ["frontend"],
-})
+db = backend.add_task("Database layer", stage="active", priority="high")
+migrations = db.add_task("Schema migrations", stage="ready", priority="medium")
+pooling = db.add_task("Connection pooling", stage="ready", priority="medium")
 
-# Backend tasks
-auth = backend.add_task({"title": "Authentication", "stage": "review", "priority": "high"})
-database = backend.add_task({"title": "Database layer", "stage": "active", "priority": "urgent"})
-api_routes = backend.add_task({"title": "API routes", "stage": "blocked", "priority": "high"})
-caching = backend.add_task({"title": "Caching layer", "stage": "inbox", "priority": "low"})
+routes = backend.add_task("API routes", stage="ready", priority="urgent")
+routes.link(db, kind="depends_on")
 
-# Frontend tasks
-components = frontend.add_task({"title": "Component library", "stage": "active", "priority": "high"})
-state_mgmt = frontend.add_task({"title": "State management", "stage": "ready", "priority": "medium"})
-design_system = frontend.add_task({"title": "Design system", "stage": "done", "priority": "medium"})
-
-# Subtasks under database
-database.add_task({"title": "Schema migrations", "stage": "done", "priority": "high"})
-database.add_task({"title": "Connection pooling", "stage": "active", "priority": "high"})
-database.add_task({"title": "Query optimization", "stage": "inbox", "priority": "medium"})
-
-# Dependencies
-api_routes.link(database, kind="depends_on")
-api_routes.link(auth, kind="depends_on")
-components.link(design_system, kind="depends_on")
-state_mgmt.link(components, kind="depends_on")
-
-# Some notes
-api_routes.note("Blocked until database and auth layers are both complete.")
-database.note("Connection pooling proving trickier than expected.")
-backend.note("On track despite the API routes blockage.")
+ui_shell = frontend.add_task("App shell", stage="ready", priority="high")
+ui_shell.hold("Waiting on brand typography tokens")
 ```
 
 ---
 
-## Board View
+## 1. Critical-Path Ready Queue (`atlas.queue()`)
 
-**Question it answers:** *Where is everything right now?*
+`atlas.queue()` answers **"What executable leaf task should be worked on next?"**:
 
-The board groups tasks by stage — like a kanban board in data form.
-
-```python
-board = atlas.board()
-
-for stage, tasks in board["stages"].items():
-    if tasks:
-        print(f"\n{stage.upper()} ({len(tasks)}):")
-        for t in tasks:
-            print(f"  [{t['priority']:>6}] {t['title']}")
-```
-
-Output:
-
-```
-INBOX (2):
-  [   low] Caching layer
-  [medium] Query optimization
-
-READY (1):
-  [medium] State management
-
-ACTIVE (2):
-  [urgent] Database layer
-  [  high] Component library
-
-BLOCKED (1):
-  [  high] API routes
-
-REVIEW (1):
-  [  high] Authentication
-
-DONE (2):
-  [medium] Design system
-  [  high] Schema migrations
-```
-
-### Scoped to a goal
-
-Focus the board on a single goal to see only the work that contributes to it:
+- Excludes `done`, `canceled`, `review`, and `archived` tasks.
+- Excludes container parent tasks while they still have open subtasks (surfacing `migrations` and `pooling` rather than `db`, even when scoped to `goal_id=backend.id` or `dream_id=dream.id`).
+- Excludes topologically blocked (`routes`) and externally held (`ui_shell`) tasks.
+- Excludes tasks under `paused` Goals or `dormant` Dreams, and tasks claimed by other workers.
+- Computes **critical-path priority inheritance**: if a low/medium prerequisite blocks an `urgent` task, its `effective_priority` is boosted automatically.
 
 ```python
+for item in atlas.queue():
+    print(item["effective_priority"], item["title"], item["stage"])
+```
+
+---
+
+## 2. Progressive Tree (`atlas.tree()`)
+
+- When the Atlas has **no Dreams**, `atlas.tree()` renders `{"goals": [...], "unattached_tasks": [...]}` with zero Dream keys.
+- When **Dreams exist**, `atlas.tree()` renders `{"dreams": [...], "unattached_goals": [...], "unattached_tasks": [...]}`.
+- Archived items are filtered consistently at *every* depth unless `include_archived=True` is passed.
+
+---
+
+## 3. Workflow Board & Aggregate Summary
+
+```python
+# All non-archived tasks bucketed across inbox, ready, active, review, done, canceled
+full_board = atlas.board()
+
+# Transitively scoped to a Goal or Dream (includes nested subtasks!)
 backend_board = atlas.board(goal_id=backend.id)
-```
+dream_board = atlas.board(dream_id=dream.id)
 
-This shows only tasks attached to the backend goal.
-
-### With filters
-
-```python
-high_priority_board = atlas.board(priority="high")
-```
-
----
-
-## Tree View
-
-**Question it answers:** *What is the shape of this project?*
-
-The tree reveals the hierarchical structure — goals containing tasks containing subtasks.
-
-```python
-tree = atlas.tree()
-print(json.dumps(tree, indent=2))
-```
-
-Output structure:
-
-```json
-{
-  "goals": [
-    {
-      "id": "g-...",
-      "title": "Backend service",
-      "status": "active",
-      "priority": "high",
-      "tasks": [
-        {
-          "id": "t-...",
-          "title": "Authentication",
-          "stage": "review",
-          "priority": "high"
-        },
-        {
-          "id": "t-...",
-          "title": "Database layer",
-          "stage": "active",
-          "priority": "urgent",
-          "subtasks": [
-            {"id": "t-...", "title": "Schema migrations", "stage": "done", "priority": "high"},
-            {"id": "t-...", "title": "Connection pooling", "stage": "active", "priority": "high"},
-            {"id": "t-...", "title": "Query optimization", "stage": "inbox", "priority": "medium"}
-          ]
-        },
-        ...
-      ]
-    },
-    {
-      "id": "g-...",
-      "title": "Frontend app",
-      ...
-    }
-  ]
-}
-```
-
-Key behaviors:
-
-- Only top-level goals appear at the root (subgoals nest inside their parents).
-- Only root-level tasks appear under each goal (subtasks nest under their parents).
-- Archived items are excluded.
-- Tasks not attached to any goal appear in an `unattached_tasks` key.
-
----
-
-## Queue View
-
-**Question it answers:** *What should I work on next?*
-
-The queue is a priority-sorted list of actionable work. It applies opinionated filtering to surface what matters:
-
-```python
-queue = atlas.queue()
-
-for i, item in enumerate(queue, 1):
-    goals = ", ".join(item["goal_ids"]) if item["goal_ids"] else "unattached"
-    print(f"{i}. [{item['priority']:>6}] {item['title']} ({item['stage']}) — {goals}")
-```
-
-Output:
-
-```
-1. [urgent] Connection pooling (active) — ...
-2. [  high] API routes (blocked) — ...
-3. [  high] Authentication (review) — ...
-4. [  high] Component library (active) — ...
-5. [medium] State management (ready) — ...
-6. [medium] Query optimization (inbox) — ...
-7. [   low] Caching layer (inbox) — ...
-```
-
-Key behaviors:
-
-- **Excludes done and archived tasks** — only shows work that still needs attention.
-- **Excludes parent/container tasks** — if a task has subtasks, the subtasks appear instead. This prevents showing "Database layer" alongside its own children.
-- **Sorted by priority** — urgent first, then high, medium, low.
-
-### Scoped to a goal
-
-```python
-backend_queue = atlas.queue(goal_id=backend.id)
-```
-
----
-
-## Summary View
-
-**Question it answers:** *What does the big picture look like?*
-
-```python
+# Health overview (includes stalled_dreams whenever Dreams are present)
 summary = atlas.summary()
-
-print(f"Goals: {summary['goal_count']}")
-print(f"Tasks: {summary['task_count']}")
-print(f"\nTasks by stage:")
-for stage, count in summary['by_stage'].items():
-    print(f"  {stage}: {count}")
-print(f"\nGoals by status:")
-for status, count in summary['by_status'].items():
-    print(f"  {status}: {count}")
-print(f"\nRecent events: {len(summary['recent_events'])}")
-```
-
-The summary gives you a fast aggregate snapshot. It's useful for dashboards, status reports, or quick sanity checks.
-
----
-
-## Context: Focused Situational Awareness
-
-While views show the big picture, `context()` zooms into a single entity and returns everything relevant about it.
-
-### Task context (compact)
-
-```python
-ctx = api_routes.context()
-print(json.dumps(ctx, indent=2))
-```
-
-```json
-{
-  "id": "t-...",
-  "title": "API routes",
-  "stage": "blocked",
-  "priority": "high",
-  "tags": [],
-  "goal_ids": ["g-..."],
-  "latest_note": "Blocked until database and auth layers are both complete."
-}
-```
-
-Compact mode gives you the essentials: identity, state, and the latest note. It includes structural references (parent, children, goals) only when they exist.
-
-### Task context (full)
-
-```python
-ctx = api_routes.context(mode="full")
-print(json.dumps(ctx, indent=2, default=str))
-```
-
-Full mode adds everything: summary, all structural IDs, all links (with full link data), the last 5 notes, and the 10 most recent events.
-
-### Goal context (compact)
-
-```python
-ctx = backend.context()
-print(json.dumps(ctx, indent=2))
-```
-
-```json
-{
-  "id": "g-...",
-  "title": "Backend service",
-  "status": "active",
-  "priority": "high",
-  "tags": ["backend"],
-  "task_count": 4,
-  "latest_note": "On track despite the API routes blockage."
-}
-```
-
-### Goal context (full)
-
-```python
-ctx = backend.context(mode="full")
-```
-
-Full goal context includes the progress snapshot (task counts by stage, done ratio), which is especially useful for status reporting:
-
-```json
-{
-  "id": "g-...",
-  "title": "Backend service",
-  "status": "active",
-  "priority": "high",
-  "tags": ["backend"],
-  "summary": "",
-  "parent_goal_id": null,
-  "child_goal_ids": [],
-  "task_ids": ["t-...", "t-...", "t-...", "t-..."],
-  "links": [],
-  "progress": {
-    "goal_id": "g-...",
-    "task_count": 4,
-    "by_stage": {"review": 1, "active": 1, "blocked": 1, "inbox": 1},
-    "done_count": 0,
-    "blocked_count": 1,
-    "active_count": 1,
-    "done_ratio": 0.0
-  },
-  "notes": [...],
-  "recent_events": [...]
-}
 ```
 
 ---
 
-## Progress
+## 4. Hydrated Neighborhood Context (`context()`)
 
-The `progress()` method on goals gives you a quick readout of how work is advancing:
+Unlike raw foreign-key dumps, `context()` resolves 1-hop neighbors inline with titles and states, attaches a ~15-token `dream` breadcrumb on Tasks and Goals, and propagates upstream completion receipts:
 
 ```python
-for goal in atlas.get_goals():
-    p = goal.progress()
-    bar = "█" * p["done_count"] + "░" * (p["task_count"] - p["done_count"])
-    print(f"{goal.title}: [{bar}] {p['done_ratio']:.0%} ({p['done_count']}/{p['task_count']})")
-```
+migrations.complete("Applied initial DDL", artifacts=["sql/001_init.sql"])
+pooling.complete("Configured PgBouncer pool", artifacts=["infra/pgbouncer.ini"])
+db.complete("Database layer verified end-to-end", artifacts=["src/db.py"])
 
-```
-Backend service: [░░░░] 0% (0/4)
-Frontend app: [█░░] 33% (1/3)
+# 'routes' is now unblocked and immediately sees 'src/db.py' in satisfied_dependencies!
+ctx = routes.context(mode="full")
+print(ctx["is_blocked"])  # False
+print(ctx["dream"])       # {'id': 'd-...', 'title': 'Unified Developer Portal', 'status': 'active'}
+print(ctx["satisfied_dependencies"][0]["result"]["artifacts"])
+# ['src/db.py']
 ```
 
 ---
 
-## Choosing the Right View
+## 5. Token-Tight Markdown Briefings (`brief()`)
 
-| You want to know... | Use |
-|---|---|
-| Where all tasks are in the workflow | `atlas.board()` |
-| The structural shape of the project | `atlas.tree()` |
-| What to work on next | `atlas.queue()` |
-| High-level counts and health | `atlas.summary()` |
-| Everything about one task | `task.context(mode="full")` |
-| Everything about one goal | `goal.context(mode="full")` |
-| How much is done for a goal | `goal.progress()` |
+When feeding state into an LLM prompt (such as `ThoughtFlow`'s `THOUGHT`), `.brief()` renders the exact situational picture in compact Markdown at a fraction of the token cost of raw JSON:
 
-All views return structured Python dicts and lists. They're designed to be consumed programmatically — rendered into text, piped to a UI, formatted as markdown, or passed to an AI agent as context.
+```python
+print(atlas.brief())
+print(dream.brief())
+print(backend.brief())
+print(routes.brief())
+```
